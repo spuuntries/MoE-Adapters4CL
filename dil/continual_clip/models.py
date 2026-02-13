@@ -19,6 +19,31 @@ import random
 
 from .dynamic_dataset import DynamicDataset
 
+from types import SimpleNamespace
+
+
+def _make_clip_args(task_id=0, is_train=True, apply_moe=True, experts_num=22,
+                    topk=2, ffn_adapt=True, ffn_option='parallel',
+                    ffn_num=64, ffn_adapt_where='AdapterDoubleEncoder',
+                    autorouter=False):
+    """Create an args namespace with MoE adapter params required by clip.load().
+    
+    The custom CLIP model in dil/clip/model.py requires these attributes
+    on the args object passed through build_model -> CLIP -> ResidualAttentionBlock.
+    """
+    return SimpleNamespace(
+        task_id=task_id,
+        is_train=is_train,
+        apply_moe=apply_moe,
+        experts_num=experts_num,
+        topk=topk,
+        ffn_adapt=ffn_adapt,
+        ffn_option=ffn_option,
+        ffn_num=ffn_num,
+        ffn_adapt_where=ffn_adapt_where,
+        autorouter=autorouter,
+    )
+
 
 class ClassIncremental(nn.Module):
     def __init__(self, cfg, device, jit=False):
@@ -26,7 +51,8 @@ class ClassIncremental(nn.Module):
         self.prompt_template = cfg.prompt_template
         self.device = device
         self.classes_names = None
-        self.model, self.transforms, _ = clip.load(cfg.model_name, device=device, jit=jit)
+        clip_args = _make_clip_args()
+        self.model, self.transforms, _ = clip.load(cfg.model_name, device=device, jit=jit, args=clip_args)
         self.ref_model = None
         self.class_ids_per_task = list(get_class_ids_per_task(cfg))
         self.current_class_names = []
@@ -141,7 +167,8 @@ class DomainIncremental(nn.Module):
         self.prompt_template = cfg.prompt_template
         self.device = device
         self.classes_names = None
-        self.model, self.transforms, _ = clip.load(cfg.model_name, device=device, jit=jit)
+        clip_args = _make_clip_args()
+        self.model, self.transforms, _ = clip.load(cfg.model_name, device=device, jit=jit, args=clip_args)
         self.ref_model = None
         self.num_classes = cfg.get("num_classes", 65)
         self.text_tokens = None
