@@ -1,0 +1,19 @@
+class_order: class_orders/officehome.yaml
+dataset_root: C:/Users/kek/projects/MoE-Adapters4CL/dil\../datasets/
+workdir: C:/Users/kek/projects/MoE-Adapters4CL/dil
+log_path: metrics.json
+model_name: ViT-B/16
+prompt_template: a photo of a {}.
+batch_size: 64
+increment: 65
+initial_increment: 65
+num_classes: 65
+scenario: domain
+dataset: officehome
+domain_order: 1
+weight_decay: 0.0
+l2: 0
+ce_method: 0
+method: MoE-Adapters
+lr: 0.001
+ls: 0.0

@@ -1,0 +1,2 @@
+- dataset_root=../datasets/
+- class_order=class_orders/officehome.yaml
