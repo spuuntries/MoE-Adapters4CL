@@ -149,7 +149,7 @@ class ClassIncremental(nn.Module):
 
             inputs, targets = inputs.cuda(), targets.cuda()
 
-            logits_per_image, _ = self.model(inputs, texts, 0, is_train=True)  # 分开
+            logits_per_image, _ = self.model(inputs, texts)
             # -- cross entropy loss --
             loss = F.cross_entropy(logits_per_image, targets, label_smoothing=cfg.ls)
             optimizer.zero_grad()
@@ -245,7 +245,7 @@ class DomainIncremental(nn.Module):
 
             inputs, targets = inputs.cuda(), targets.cuda()
 
-            logits_per_image, _ = self.model(inputs, texts, 0, is_train=True)
+            logits_per_image, _ = self.model(inputs, texts)
             # Cross entropy loss
             loss = F.cross_entropy(logits_per_image, targets, label_smoothing=cfg.ls)
             optimizer.zero_grad()

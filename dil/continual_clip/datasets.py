@@ -109,7 +109,7 @@ class OfficeHomeDILScenario:
 
         domain_names = OFFICEHOME_DOMAIN_ORDERS.get(domain_order,
                                                      OFFICEHOME_DOMAIN_ORDERS[1])
-        split_type = "train" if is_train else "test"
+        split_type = "train" if is_train else "eval"
 
         self._domain_data = {i: {"paths": [], "labels": [], "task_ids": []}
                              for i in range(len(domain_names))}
