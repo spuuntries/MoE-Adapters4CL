@@ -61,7 +61,7 @@ class ClassIncremental(nn.Module):
 
     def forward(self, image, taskid):
         with torch.no_grad():
-            logits_per_image, _ = self.model(image, self.text_tokens, 0, is_train=False)
+            logits_per_image, _ = self.model(image, self.text_tokens)
             probs = logits_per_image.softmax(dim=-1)
         return probs
 
@@ -175,7 +175,7 @@ class DomainIncremental(nn.Module):
 
     def forward(self, image, taskid):
         with torch.no_grad():
-            logits_per_image, _ = self.model(image, self.text_tokens, 0, is_train=False)
+            logits_per_image, _ = self.model(image, self.text_tokens)
             probs = logits_per_image.softmax(dim=-1)
         return probs
 
