@@ -3,12 +3,13 @@
 import os
 import csv
 import numpy as np
+import torch
 import torch.nn as nn
+from PIL import Image
 
 from continuum import ClassIncremental, InstanceIncremental
 from continuum.datasets import (
     CIFAR100, ImageNet100, TinyImageNet200, ImageFolderDataset, Core50,
-    InMemoryDataset,
 )
 from .utils import get_dataset_class_names
 
@@ -77,52 +78,91 @@ class ImageNet1000(ImageFolderDataset):
         return super().get_data()
 
 
-def _load_officehome_csv(data_root, is_train, domain_order=1):
-    """Load Office-Home from officehome.csv with domain-based task IDs.
-    
-    Returns an InMemoryDataset with (paths, labels, task_ids).
+class OfficeHomeTaskSet(torch.utils.data.Dataset):
+    """PyTorch Dataset for one or more Office-Home domains.
+    Yields (image_tensor, label, task_id) tuples.
     """
-    # Determine the CSV path - look relative to the dil directory
-    csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 
-                            "utils", "datautils", "officehome.csv")
-    
-    domain_names = OFFICEHOME_DOMAIN_ORDERS.get(domain_order, OFFICEHOME_DOMAIN_ORDERS[1])
-    split_type = "train" if is_train else "test"
-    
-    x_paths, y_labels, t_tasks = [], [], []
-    
-    with open(csv_path, "r") as f:
-        reader = csv.reader(f)
-        header = next(reader)  # env, label, path, split
-        for row in reader:
-            domain_type = row[0]
-            data_path = row[2]
-            data_split = row[3]
-            
-            if data_split != split_type:
-                continue
-            if domain_type not in domain_names:
-                continue
-                
-            # Get class ID from folder name
-            data_path_clean = data_path.replace("office_home/", "")
-            cls_name = os.path.basename(os.path.dirname(data_path_clean))
-            cls_id = _OFFICEHOME_FOLDER_TO_CLASS.get(cls_name, -1)
-            if cls_id < 0:
-                continue
-            
-            domain_id = domain_names.index(domain_type)
-            abs_path = os.path.join(data_root, data_path_clean)
-            
-            x_paths.append(abs_path)
-            y_labels.append(cls_id + domain_id * 65)  # domain-shifted label
-            t_tasks.append(domain_id)
-    
-    x = np.array(x_paths)
-    y = np.array(y_labels)
-    t = np.array(t_tasks)
-    
-    return InMemoryDataset(x, y, t)
+    def __init__(self, paths, labels, task_ids, transforms=None):
+        self.paths = paths
+        self.labels = labels
+        self.task_ids = task_ids
+        self.transforms = transforms
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        img = Image.open(self.paths[idx]).convert("RGB")
+        if self.transforms is not None:
+            img = self.transforms(img)
+        return img, self.labels[idx], self.task_ids[idx]
+
+
+class OfficeHomeDILScenario:
+    """Custom DIL scenario for Office-Home, bypasses continuum.
+    Splits data by domain. Supports iteration, len, and slicing.
+    """
+    def __init__(self, data_root, is_train, domain_order=1, transforms=None):
+        csv_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "utils", "datautils", "officehome.csv")
+
+        domain_names = OFFICEHOME_DOMAIN_ORDERS.get(domain_order,
+                                                     OFFICEHOME_DOMAIN_ORDERS[1])
+        split_type = "train" if is_train else "test"
+
+        self._domain_data = {i: {"paths": [], "labels": [], "task_ids": []}
+                             for i in range(len(domain_names))}
+
+        with open(csv_path, "r") as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header
+            for row in reader:
+                domain_type, data_path, data_split = row[0], row[2], row[3]
+                if data_split != split_type or domain_type not in domain_names:
+                    continue
+                data_path_clean = data_path.replace("office_home/", "")
+                cls_name = os.path.basename(os.path.dirname(data_path_clean))
+                cls_id = _OFFICEHOME_FOLDER_TO_CLASS.get(cls_name, -1)
+                if cls_id < 0:
+                    continue
+                domain_id = domain_names.index(domain_type)
+                abs_path = os.path.join(data_root, data_path_clean)
+                self._domain_data[domain_id]["paths"].append(abs_path)
+                self._domain_data[domain_id]["labels"].append(cls_id + domain_id * 65)
+                self._domain_data[domain_id]["task_ids"].append(domain_id)
+
+        self._num_tasks = len(domain_names)
+        self._transforms = transforms
+        self._domain_names = domain_names
+        print(f"[OfficeHomeDIL] Loaded {split_type}: " +
+              ", ".join(f"{domain_names[i]}={len(self._domain_data[i]['paths'])}"
+                       for i in range(self._num_tasks)))
+
+    def __len__(self):
+        return self._num_tasks
+
+    def __iter__(self):
+        for i in range(self._num_tasks):
+            yield self[i]
+
+    def __getitem__(self, idx):
+        if isinstance(idx, slice):
+            return self._get_slice(idx)
+        d = self._domain_data[idx]
+        return OfficeHomeTaskSet(d["paths"], d["labels"], d["task_ids"],
+                                self._transforms)
+
+    def _get_slice(self, s):
+        indices = range(*s.indices(self._num_tasks))
+        all_paths, all_labels, all_tids = [], [], []
+        for i in indices:
+            d = self._domain_data[i]
+            all_paths.extend(d["paths"])
+            all_labels.extend(d["labels"])
+            all_tids.extend(d["task_ids"])
+        return OfficeHomeTaskSet(all_paths, all_labels, all_tids,
+                                self._transforms)
 
 
 
@@ -177,10 +217,8 @@ def get_dataset(cfg, is_train, transforms=None):
         ]
     
     elif cfg.dataset == "officehome":
-        data_path = os.path.join(cfg.dataset_root, "office_home")
-        domain_order = cfg.get("domain_order", 1)
-        dataset = _load_officehome_csv(data_path, is_train, domain_order)
-        classes_names = OFFICEHOME_CLASSNAMES
+        # Office-Home uses custom scenario, not continuum
+        return None, OFFICEHOME_CLASSNAMES
 
     else:
         raise ValueError(f"'{cfg.dataset}' is a invalid dataset.")
@@ -189,6 +227,13 @@ def get_dataset(cfg, is_train, transforms=None):
 
 
 def build_cl_scenarios(cfg, is_train, transforms) -> nn.Module:
+    # Office-Home: use custom scenario directly (bypasses continuum)
+    if cfg.dataset == "officehome":
+        data_path = os.path.join(cfg.dataset_root, "office_home")
+        domain_order = cfg.get("domain_order", 1)
+        scenario = OfficeHomeDILScenario(
+            data_path, is_train, domain_order, transforms=transforms)
+        return scenario, OFFICEHOME_CLASSNAMES
 
     dataset, classes_names = get_dataset(cfg, is_train)
 
@@ -197,7 +242,7 @@ def build_cl_scenarios(cfg, is_train, transforms) -> nn.Module:
             dataset,
             initial_increment=cfg.initial_increment,
             increment=cfg.increment,
-            transformations=transforms.transforms, # Convert Compose into list
+            transformations=transforms.transforms,
             class_order=cfg.class_order,
         )
 
@@ -211,7 +256,7 @@ def build_cl_scenarios(cfg, is_train, transforms) -> nn.Module:
         NotImplementedError("Method has not been implemented. Soon be added.")
 
     else:
-        ValueError(f"You have entered `{cfg.scenario}` which is not a defined scenario, " 
+        ValueError(f"You have entered `{cfg.scenario}` which is not a defined scenario, "
                     "please choose from {{'class', 'domain', 'task-agnostic'}}.")
 
     return scenario, classes_names
