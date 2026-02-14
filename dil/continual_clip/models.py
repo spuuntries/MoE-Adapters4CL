@@ -3,6 +3,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 
 import clip.clip as clip
+import clip.model as clip_model
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -49,9 +50,23 @@ class DomainIncremental(nn.Module):
 
     def forward(self, image, taskid):
         with torch.no_grad():
-            logits_per_image, _ = self.model(image, self.text_tokens)
-            probs = logits_per_image.softmax(dim=-1)
-        return probs
+            # Split batch by task_id so each group routes through its own router
+            unique_tasks = taskid.unique()
+            if len(unique_tasks) == 1:
+                # Fast path: all samples from same domain
+                clip_model.current_task_id = unique_tasks.item()
+                logits_per_image, _ = self.model(image, self.text_tokens)
+                return logits_per_image.softmax(dim=-1)
+
+            # Mixed domains: process each group separately
+            all_probs = torch.zeros(image.size(0), self.num_classes,
+                                    device=self.device, dtype=image.dtype)
+            for tid in unique_tasks:
+                mask = (taskid == tid)
+                clip_model.current_task_id = tid.item()
+                logits, _ = self.model(image[mask], self.text_tokens)
+                all_probs[mask] = logits.softmax(dim=-1)
+            return all_probs
 
     def adaptation(self, task_id, cfg, train_dataset, train_classes_names):
         # DIL: always use ALL class names (same classes across domains)
@@ -63,6 +78,9 @@ class DomainIncremental(nn.Module):
             self._train(task_id, cfg, train_dataset, train_classes_names)
 
     def _train(self, task_id, cfg, train_dataset, train_classes_names):
+        # Set the current task's router for this domain
+        clip_model.current_task_id = task_id
+
         ### loading dataset - one domain per task
         train_loader = DataLoader(train_dataset[task_id:task_id + 1],
                                   batch_size=cfg.batch_size,

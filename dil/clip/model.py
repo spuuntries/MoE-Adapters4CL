@@ -12,6 +12,7 @@ from torch.distributions.normal import Normal
 from collections import Counter
 
 val_task_id = None
+current_task_id = 0
 
 class SparseDispatcher(object):
     """Helper for implementing a mixture of experts.
@@ -476,8 +477,8 @@ class ResidualAttentionBlock(nn.Module):
                         gates, load = self.noisy_top_k_gating(x_re, self.is_train, self.router_list[val_task_id],
                                                          self.w_noise_list[val_task_id])
                     else:
-                        gates, load = self.noisy_top_k_gating(x_re, self.is_train, self.router_list[self.task_id],
-                                                          self.w_noise_list[self.task_id])
+                        gates, load = self.noisy_top_k_gating(x_re, self.is_train, self.router_list[current_task_id],
+                                                          self.w_noise_list[current_task_id])
                     importance = gates.sum(0)
                     loss = self.cv_squared(importance) + self.cv_squared(load)
                     loss *= 1e-2 # # Todo
